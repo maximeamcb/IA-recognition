@@ -80,6 +80,12 @@ def matrix_to_vector(matrix):
     return vector
 
 
+def print_matrix(matrix, title="Pixel matrix"):
+    print(f"\n{title}:")
+    for row in matrix:
+        print(" ".join(str(value) for value in row))
+
+
 def preprocess_image(path):
     img = load_image(path)
     img = convert_to_grayscale(img)
@@ -143,39 +149,86 @@ def find_test_image():
     return None
 
 
-def recognize_digit(test_image_path, dataset):
-    test_img = preprocess_image(test_image_path)
-    test_matrix = image_to_matrix(test_img)
-    test_vector = matrix_to_vector(test_matrix)
+def segment_digits(img):
+    width, height = img.size
+    pixels = img.load()
 
-    best_digit = None
-    best_score = -1
+    columns_with_black = []
 
-    for digit, examples in dataset.items():
-        for example_vector in examples:
-            score = compare_vectors(test_vector, example_vector)
-            print(f"Comparison with digit {digit}: score = {score}")
+    for x in range(width):
+        has_black = False
+        for y in range(height):
+            if pixels[x, y] == 0:
+                has_black = True
+                break
+        columns_with_black.append(has_black)
 
-            if score > best_score:
-                best_score = score
-                best_digit = digit
+    digit_ranges = []
+    start = None
 
-    return best_digit, best_score, test_matrix
+    for x in range(width):
+        if columns_with_black[x] and start is None:
+            start = x
+        elif not columns_with_black[x] and start is not None:
+            digit_ranges.append((start, x))
+            start = None
+
+    if start is not None:
+        digit_ranges.append((start, width))
+
+    digit_images = []
+
+    for start, end in digit_ranges:
+        digit_img = img.crop((start, 0, end, height))
+        digit_img = crop_to_digit(digit_img)
+        digit_img = resize_image(digit_img)
+        digit_images.append(digit_img)
+
+    return digit_images
 
 
-def print_matrix(matrix):
-    print("\nPixel matrix:")
-    for row in matrix:
-        print(" ".join(str(value) for value in row))
+def recognize_number(test_image_path, dataset):
+    img = load_image(test_image_path)
+    img = convert_to_grayscale(img)
+    img = binarize(img)
+
+    full_matrix = image_to_matrix(resize_image(img))
+    print_matrix(full_matrix, "Binary image of the full input")
+
+    digit_images = segment_digits(img)
+
+    if len(digit_images) == 0:
+        return "", []
+
+    result = ""
+    digit_matrices = []
+
+    for digit_img in digit_images:
+        test_matrix = image_to_matrix(digit_img)
+        test_vector = matrix_to_vector(test_matrix)
+        digit_matrices.append(test_matrix)
+
+        best_digit = None
+        best_score = -1
+
+        for digit, examples in dataset.items():
+            for example_vector in examples:
+                score = compare_vectors(test_vector, example_vector)
+
+                if score > best_score:
+                    best_score = score
+                    best_digit = digit
+
+        result += str(best_digit)
+
+    return result, digit_matrices
 
 
-def main():
-    test_image = find_test_image()
+test_image = find_test_image()
 
-    if test_image is None:
-        print("Aucune image test trouvée.")
-        return
-
+if test_image is None:
+    print("Aucune image test trouvée.")
+else:
     print(f"Image test utilisée : {test_image}")
 
     dataset = build_dataset("reference")
@@ -183,15 +236,11 @@ def main():
 
     if total_examples == 0:
         print("Aucune image de référence trouvée dans le dataset.")
-        return
+    else:
+        recognized_number, digit_matrices = recognize_number(test_image, dataset)
 
-    digit, score, matrix = recognize_digit(test_image, dataset)
+        for i, matrix in enumerate(digit_matrices, start=1):
+            print_matrix(matrix, f"Binary matrix of digit {i}")
 
-    print_matrix(matrix)
-    print()
-    print(f"Chiffre reconnu : {digit}")
-    print(f"Meilleur score : {score}")
-
-
-if __name__ == "__main__":
-    main()
+        print()
+        print(f"Nombre reconnu : {recognized_number}")
